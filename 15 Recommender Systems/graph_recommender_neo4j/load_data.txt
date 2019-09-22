@@ -1,0 +1,32 @@
+//Cypher query to load LastFM dataset into Neo4j
+
+//When using MERGE or MATCH with LOAD CSV we need to make sure we have an index or a unique constraint on the property that we are merging on. This will ensure that the query executes in a performant way.
+//These commands must be run 1 at a time
+CREATE CONSTRAINT ON (u:User) ASSERT u.user_id IS UNIQUE
+CREATE CONSTRAINT ON (a:Artist) ASSERT a.artist_id IS UNIQUE
+
+//Replace single whitespaces in file path with %20 since it is a URL
+//Comment out this line from DB settings to import from a specific path: dbms.directories.import=import
+USING PERIODIC COMMIT
+LOAD CSV WITH HEADERS FROM "file:///C:/DSILT%20ML%20Code/15%20Recommender%20Systems graph_recommender_neo4j/user_artists.dat" AS line
+FIELDTERMINATOR '\t'
+MERGE (u:User {user_id: line.userID})
+MERGE (a:Artist {artist_id: line.artistID})
+MERGE (u) -[r:listened_to {listens: toInteger(line.weight)}]-> (a)
+
+USING PERIODIC COMMIT
+LOAD CSV WITH HEADERS FROM "file:///C:/DSILT%20ML%20Code/15%20Recommender%20Systems graph_recommender_neo4j/user_friends.dat" AS line
+FIELDTERMINATOR '\t'
+MERGE (f:User {user_id: line.friendID})
+WITH f, line
+MATCH (u:User {user_id: line.userID}), (f:User {user_id: line.friendID})
+MERGE (u) -[r:friend]- (f)
+
+//Note that double quotes " were manually removed from this file due to an import error
+LOAD CSV WITH HEADERS FROM "file:///C:/DSILT%20ML%20Code/15%20Recommender%20Systems graph_recommender_neo4j/artists.dat" AS line
+FIELDTERMINATOR '\t'
+MATCH (a:Artist {artist_id: line.id})
+SET a.artist_name = line.name
+
+//Delete everything
+MATCH(n) DETACH DELETE n

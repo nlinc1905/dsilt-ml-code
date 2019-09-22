@@ -1,0 +1,205 @@
+//Cyphter queries for LastFM graph
+
+//Graph of all users with friends
+MATCH (u) -[r:friend]- (f)
+RETURN u, f
+
+//Find users who have no friends (there are none)
+//This is like finding nodes that have none of a certain type of relationship to a certain type of node
+MATCH (u:User)
+WHERE NOT (u) -[:friend]- (:User)
+RETURN u
+
+//Find users who have no listens (there are none)
+MATCH (u:User)
+WHERE NOT (u) -[:listened_to]-> (:Artist)
+RETURN u
+
+//Find users who listen to Coldplay
+MATCH (u:User)
+WHERE (u) -[:listened_to]-> (:Artist {artist_name: 'Coldplay'})
+Return u
+
+//Find users who listen to Coldplay and Duran Duran
+MATCH (a:Artist)
+WHERE a.artist_name IN ['Coldplay', 'Duran Duran']
+WITH COLLECT(a) AS artists
+MATCH (u:User)
+WHERE ALL (a IN artists WHERE (u) -[:listened_to]-> (a))
+Return u
+
+//Count users who listen to Coldplay and Duran Duran
+MATCH (a:Artist)
+WHERE a.artist_name IN ['Coldplay', 'Duran Duran']
+WITH COLLECT(a) AS artists
+MATCH (u:User)
+WHERE ALL (a IN artists WHERE (u) -[:listened_to]-> (a))
+Return COUNT(*)
+
+//Find users who listen to Depeche Mode more than 50 times
+MATCH path = (u:User) -[:listened_to]-> (a:Artist {artist_name: 'Depeche Mode'})
+WHERE ALL (r IN rels(path) WHERE r.listens >= 50)
+RETURN u
+
+//For the user who listened to Depeche Mode 80,000 times, who else do they listen to and how often?
+MATCH (u:User {user_id: '2080'}) -[r:listened_to]-> (a:Artist)
+RETURN u, a, r.listens
+ORDER BY r.listens DESC
+
+//How many users have listened to Agonoize?
+MATCH (u:User) -[:listened_to]-> (a:Artist {artist_name: 'Agonoize'})
+RETURN COUNT(u)
+
+//How many listeners of Moby know each other?
+MATCH (u:User) -[:listened_to]-> (a:Artist {artist_name: 'Moby'})
+WITH COLLECT(u) AS moby_listeners
+MATCH (u:User) -[:friend]- (f:User)
+WHERE (u) IN moby_listeners AND (f) IN moby_listeners
+RETURN COUNT(DISTINCT u)
+
+//How many users have listened to Carly Simon more than 10 times?
+MATCH path = (u:User) -[:listened_to]-> (a:Artist {artist_name: 'Carly Simon'})
+WHERE ALL (r IN rels(path) WHERE r.listens > 10)
+RETURN COUNT(u)
+
+//Show user 2's favorite artists in descending order in terms of listens.
+MATCH (u:User {user_id: '2'}) -[r:listened_to]-> (a:Artist)
+RETURN u, a.artist_name, r.listens
+ORDER BY r.listens DESC
+
+//Find the artist with the most plays
+MATCH (u:User) -[r:listened_to]-> (a:Artist)
+RETURN a.artist_name, SUM(r.listens)
+ORDER BY SUM(r.listens) DESC
+LIMIT 1
+
+//Find the shared artists between users 2 and 4
+MATCH (u1:User {user_id: '2'}) -[:listened_to]-> (a:Artist) <-[:listened_to]- (u2:User {user_id: '4'})
+RETURN a
+
+//Find the top 10 user pairs with the most similar tastes
+//This is like finding the top 10 user pairs who have the most shared connections
+MATCH (u1:User) -[:listened_to]-> (a:Artist) <-[:listened_to]- (u2:User)
+RETURN u1, u2, COUNT(a) AS shared_conns
+ORDER BY shared_conns DESC
+LIMIT 10
+
+//Find all pairs of users who are not friends with one another
+//Note - this runs out of memory so don't run it
+MATCH (u1:User), (u2:User)
+WHERE NOT (u1) -[:friend]- (u2) AND u1 <> u2
+RETURN u1, u2
+
+//Find users with the most similar tastes who are not friends
+//This is like finding the users who have the most shared connections but are not connected themselves
+//To prevent a memory error, limit it to compare to user 4 - this will show friend recommendations for user 4
+MATCH (u1:User {user_id: '4'}) -[:listened_to]-> (a:Artist) <-[:listened_to]- (u2:User)
+WHERE NOT (u1) -[:friend]- (u2)
+RETURN u1, u2, COUNT(a) AS shared_conns
+ORDER BY shared_conns DESC
+LIMIT 5
+
+//For those 2 users, what is the shortest path of users between them?
+//Note that there are 2 types of nodes: users and artists, and this question can be the path along users or artists
+MATCH (u1:User {user_id: '4'}) -[:listened_to]-> (a:Artist) <-[:listened_to]- (u2:User)
+WHERE NOT (u1) -[:friend]- (u2) AND u1 <> u2
+WITH u1, u2, COUNT(a) AS shared_conns
+ORDER BY shared_conns DESC
+LIMIT 1
+WITH u1, u2
+//In line below, replace [:friend*] with [*] to see the shortest path in terms of artists listened to
+MATCH (u1) -[:friend]- (f1), (u2) -[:friend]- (f2), p = shortestPath((u1) -[*]- (u2))
+RETURN p
+
+//Validate shortest path by pulling all friends for those 2 users
+MATCH (u1:User {user_id: '4'}) -[:friend]- (f1), (u2:User {user_id: '1505'}) -[:friend]- (f2)
+RETURN u1, f1, u2, f2
+
+//Find users with the most similar tastes to user 4, friend or not
+MATCH (u1:User {user_id: '4'}) -[:listened_to]-> (a:Artist) <-[:listened_to]- (u2:User)
+WITH u1, u2, COUNT(a) AS shared_conns
+ORDER BY shared_conns DESC
+LIMIT 5
+//Using those results, now find an artist that these similar users know who user 4 does not know of
+MATCH (u2) -[r:listened_to]-> (a:Artist)
+WHERE NOT (u1) -[:listened_to]-> (a)
+RETURN a, COUNT(a) AS recommendation_score, COLLECT(u2) AS users_who_like_this_artist
+ORDER BY recommendation_score DESC
+
+//Alternatively, do the same query as above but using the number of listens as the score
+MATCH (u1:User {user_id: '4'}) -[:listened_to]-> (a:Artist) <-[:listened_to]- (u2:User)
+WITH u1, u2, COUNT(a) AS shared_conns
+ORDER BY shared_conns DESC
+LIMIT 5
+MATCH (u2) -[r:listened_to]-> (a:Artist)
+WHERE NOT (u1) -[:listened_to]-> (a)
+RETURN a, SUM(r.listens) AS recommendation_score, COLLECT(u2) AS users_who_like_this_artist
+ORDER BY recommendation_score DESC
+
+//Given an artist, find other artists who users who like them typically listen to.
+MATCH (u:User) -[:listened_to]-> (a:Artist {artist_name: 'Madonna'})
+WITH u AS artist_listeners
+MATCH (artist_listeners) -[:listened_to]-> (other_a:Artist)
+WHERE other_a.artist_name <> 'Madonna'
+WITH COLLECT(DISTINCT other_a) AS similar_artists
+MATCH (u:User) -[r:listened_to]-> (a:Artist)
+WHERE a IN similar_artists
+RETURN DISTINCT a, SUM(r.listens) AS nbr_listens
+ORDER BY nbr_listens DESC
+LIMIT 10
+
+//Above query is not quite right, as it doesn't account for people listening to some artists more overall
+//With multiple levels of aggregation, as in this query, start with the highest and carry it down through with statements
+MATCH (a1:Artist {artist_name: 'Madonna'}) <-[:listened_to]- (u:User) -[r:listened_to]-> (a2:Artist)
+WITH SUM(toFloat(r.listens)) AS total_listens
+MATCH (u:User) -[:listened_to]-> (a:Artist {artist_name: 'Madonna'})
+WITH u AS artist_listeners, total_listens
+MATCH (artist_listeners) -[r:listened_to]-> (other_a:Artist)
+WHERE other_a.artist_name <> 'Madonna'
+RETURN other_a.artist_name, (SUM(toFloat(r.listens))/total_listens)*100 AS perc_listens
+ORDER BY perc_listens DESC
+LIMIT 20
+
+//Yet another alternative is to use the count of the times another artist appears instead of nbr_listens
+MATCH (a:Artist {artist_name: 'Madonna'}) <-[:listened_to]- (u:User) -[:listened_to]-> (other_a:Artist)
+WHERE other_a.artist_name <> 'Madonna'
+RETURN DISTINCT other_a.artist_name AS artist, COUNT(other_a) AS frequency
+ORDER BY frequency DESC
+LIMIT 20
+
+
+//Predict how many times a user will listen to an artist that they haven't heard before
+
+//Step 1: Get the corresponding artist ID
+MATCH (a:Artist {artist_name: 'Madonna'})
+RETURN toInteger(a.artist_id) AS artist_id
+
+//Step 2: Find users who have listened to an artist and see how many times they've listened to other artists
+MATCH (u:User) -[:listened_to]-> (a:Artist {artist_name: 'Madonna'})
+WITH u, toInteger(u.user_id) AS user_id
+MATCH (u) -[r:listened_to]-> (a:Artist)
+RETURN DISTINCT user_id, toInteger(a.artist_id) AS artist_id, r.listens AS score
+ORDER BY user_id, artist_id
+
+
+//Predict links by calculating several graph features (link prediction without looking at node properties)
+
+//Step 1: Find common neighbors for every pair of nodes
+//Note - this runs out of memory, so run for a subgraph
+MATCH (u1:User {user_id: '2'}) --(neighbor)-- (u2:User)
+WHERE NOT (u1) = (u2)
+OPTIONAL MATCH (u1) -[r:friend]- (u2)  //See if an actual link exists between them (validates common neighbors)
+RETURN DISTINCT u1.user_id AS user1, u2.user_id AS user2, COUNT(neighbor) AS common_neighbors, r IS NOT NULL AS users_are_friends
+ORDER BY common_neighbors DESC
+
+//Since step 1 fails for the entire graph, need better solution
+//Neo4j is bad at graph analytics, see: https://stackoverflow.com/questions/41380530/cypher-query-to-calculate-jaccard-similarity
+//Use query below to get adjacency matrix and pull into R or Python for analytics
+//This query will run out of memory - import that original user_friends.dat file instead
+MATCH (u1:User), (u2:User)
+OPTIONAL MATCH path = (u1) -[:friend]- () -[:friend]- (u2)
+WITH u1, u2, CASE WHEN path IS NULL THEN 0 ELSE COUNT(path) END AS overlap
+ORDER BY toInteger(u1.user_id), toInteger(u2.user_id)
+RETURN toInteger(u1.user_id), COLLECT(overlap)
+ORDER BY toInteger(u1.user_id)
+
